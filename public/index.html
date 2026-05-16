@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IoT Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --bg:       #080c14;
+      --panel:    #0d1420;
+      --border:   #1a2535;
+      --border2:  #243044;
+      --blue:     #3b82f6;
+      --cyan:     #22d3ee;
+      --green:    #10b981;
+      --yellow:   #f59e0b;
+      --red:      #ef4444;
+      --text:     #cbd5e1;
+      --muted:    #475569;
+      --mono:     'IBM Plex Mono', monospace;
+      --sans:     'IBM Plex Sans', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      /* subtle grid texture */
+      background-image:
+        linear-gradient(rgba(59,130,246,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59,130,246,.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* ── layout ── */
+    .shell {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
+    }
+
+    /* ── header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      width: 40px; height: 40px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .brand h1 {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -.2px;
+      color: #e2e8f0;
+    }
+
+    .brand p {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      font-family: var(--mono);
+    }
+
+    .mqtt-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border2);
+      background: var(--panel);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      transition: border-color .3s, color .3s;
+    }
+
+    .mqtt-pill.connected    { border-color: rgba(16,185,129,.4); color: var(--green); }
+    .mqtt-pill.reconnecting { border-color: rgba(245,158,11,.4); color: var(--yellow); }
+    .mqtt-pill.disconnected,
+    .mqtt-pill.offline      { border-color: rgba(239,68,68,.4);  color: var(--red); }
+
+    .pip {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    .mqtt-pill.connected .pip { animation: blink 2s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── alert banner ── */
+    #banner {
+      display: none;
+      border-radius: 8px;
+      padding: 13px 18px;
+      margin-bottom: 22px;
+      font-size: 13px;
+      font-family: var(--mono);
+      border-left: 3px solid;
+      animation: slide-down .25s ease;
+    }
+    @keyframes slide-down { from{transform:translateY(-6px);opacity:0} to{transform:translateY(0);opacity:1} }
+    #banner.warning  { background:rgba(245,158,11,.07);  border-color:var(--yellow); color:var(--yellow); }
+    #banner.critical { background:rgba(239,68,68,.07);   border-color:var(--red);    color:var(--red); }
+
+    .banner-title { font-weight: 700; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px; }
+
+    /* ── grid ── */
+    .grid { display: grid; gap: 14px; }
+    .row2 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .row3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+    /* ── panel ── */
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent, var(--blue)) 50%, transparent);
+      opacity: .5;
+    }
+
+    .panel-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    /* ── big number ── */
+    .big {
+      font-family: var(--mono);
+      font-size: 60px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -2px;
+      color: #e2e8f0;
+      transition: color .4s;
+    }
+    .big .unit { font-size: 22px; font-weight: 400; color: var(--muted); margin-left: 2px; }
+    .big.warn    { color: var(--yellow); }
+    .big.danger  { color: var(--red); }
+
+    .reading-sub {
+      margin-top: 10px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── bar ── */
+    .bar {
+      margin-top: 16px;
+      height: 3px;
+      background: var(--border2);
+      border-radius: 2px;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width .9s cubic-bezier(.4,0,.2,1), background .4s;
+    }
+
+    /* ── stat rows ── */
+    .stat { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
+    .stat:last-child { border-bottom:none; }
+    .stat-k { color:var(--muted); }
+    .stat-v { font-family:var(--mono); font-weight:600; }
+    .stat-v.ok     { color:var(--green); }
+    .stat-v.warn   { color:var(--yellow); }
+    .stat-v.danger { color:var(--red); }
+
+    /* ── chart ── */
+    .chart-wrap { height:150px; margin-top:14px; position:relative; }
+    canvas { display:block; width:100%; height:100%; }
+
+    /* ── log ── */
+    .log-wrap {
+      margin-top:12px;
+      max-height:180px;
+      overflow-y:auto;
+      display:flex;
+      flex-direction:column;
+      gap:5px;
+    }
+    .log-wrap::-webkit-scrollbar { width:3px; }
+    .log-wrap::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+
+    .log-row {
+      display:flex;
+      gap:10px;
+      padding:5px 10px;
+      border-radius:5px;
+      font-family:var(--mono);
+      font-size:11px;
+      background:rgba(255,255,255,.015);
+      border:1px solid transparent;
+      animation:fade-in .25s ease;
+    }
+    @keyframes fade-in { from{opacity:0;transform:translateX(-4px)} to{opacity:1;transform:none} }
+    .log-row.info     { border-color:rgba(59,130,246,.12); }
+    .log-row.success  { border-color:rgba(16,185,129,.12); color:var(--green); }
+    .log-row.warn     { border-color:rgba(245,158,11,.15); color:var(--yellow); }
+    .log-row.critical { border-color:rgba(239,68,68,.15);  color:var(--red); }
+    .log-t { color:var(--muted); white-space:nowrap; flex-shrink:0; }
+
+    /* ── footer ── */
+    .footer {
+      text-align:center;
+      margin-top:28px;
+      font-family:var(--mono);
+      font-size:11px;
+      color:var(--muted);
+    }
+
+    /* ── spinner ── */
+    .spinner-wrap {
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      color:var(--muted);
+      font-family:var(--mono);
+      font-size:12px;
+      padding:24px 0;
+    }
+    .ring {
+      width:26px; height:26px;
+      border:2px solid var(--border2);
+      border-top-color:var(--blue);
+      border-radius:50%;
+      animation:spin .8s linear infinite;
+    }
+    @keyframes spin { to{transform:rotate(360deg)} }
+
+    @media(max-width:520px) {
+      .big { font-size:48px; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- header -->
+  <header>
+    <div class="brand">
+      <div class="brand-badge">🌡️</div>
+      <div>
+        <h1>IoT Monitor</h1>
+        <p>ESP32 · DHT11 · AWS IoT Core · Tempo Real</p>
+      </div>
+    </div>
+    <div class="mqtt-pill" id="pill">
+      <span class="pip"></span>
+      <span id="pill-txt">Conectando...</span>
+    </div>
+  </header>
+
+  <!-- alert banner -->
+  <div id="banner">
+    <div class="banner-title" id="b-title"></div>
+    <div id="b-msg"></div>
+  </div>
+
+  <!-- row 1: temperatura + umidade -->
+  <div class="grid row2" style="margin-bottom:14px">
+
+    <div class="panel" style="--accent:var(--cyan)">
+      <div class="panel-label">🌡️ Temperatura</div>
+      <div id="temp-panel">
+        <div class="spinner-wrap"><div class="ring"></div>Aguardando...</div>
+      </div>
+    </div>
+
+    <div class="panel" style="--accent:var(--blue)">
+      <div class="panel-label">💧 Umidade Relativa</div>
+      <div id="humi-panel">
+        <div class="spinner-wrap"><div class="ring"></div>Aguardando...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- row 2: motor de regras + gráfico -->
+  <div class="grid row2" style="margin-bottom:14px">
+
+    <div class="panel" style="--accent:var(--green)">
+      <div class="panel-label">⚙️ Motor de Regras</div>
+      <div id="rules-panel">
+        <div class="spinner-wrap"><div class="ring"></div>Calculando...</div>
+      </div>
+    </div>
+
+    <div class="panel" style="--accent:var(--blue)">
+      <div class="panel-label">📈 Histórico Temperatura (30 leituras)</div>
+      <div class="chart-wrap">
+        <canvas id="chart"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- row 3: log -->
+  <div class="panel" style="--accent:var(--muted)">
+    <div class="panel-label">📋 Log de Eventos</div>
+    <div class="log-wrap" id="log">
+      <div class="log-row info">
+        <span class="log-t">--:--:--</span>
+        <span>Aguardando conexão WebSocket...</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer" id="footer">—</div>
+
+</div>
+
+<script>
+// ════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════
+const S = {
+  history:      [],
+  maxHistory:   30,
+  alerts:       new Map(),
+  mqttStatus:   'disconnected',
+  threshold:    28,
+};
+
+// ════════════════════════════════════════════════════
+//  SOCKET.IO
+// ════════════════════════════════════════════════════
+const socket = io();
+
+socket.on('connect',    () => { log('info', 'WebSocket conectado ao backend'); setMqtt('connecting'); });
+socket.on('disconnect', () => { log('warn', 'WebSocket desconectado');         setMqtt('disconnected'); });
+
+socket.on('mqtt_status', d => {
+  setMqtt(d.status);
+  log(d.status === 'connected' ? 'success' : 'warn', `MQTT AWS IoT Core: ${d.status}`);
+});
+
+socket.on('reading', d => {
+  S.threshold = d.stats?.tempThreshold ?? S.threshold;
+  renderTemp(d.temperature, d.stats);
+  renderHumi(d.humidity);
+  renderRules(d.stats);
+  pushHistory(d.temperature);
+  document.getElementById('footer').textContent =
+    `Última leitura: ${new Date(d.timestamp).toLocaleTimeString('pt-BR')}`;
+});
+
+socket.on('alert', a => {
+  S.alerts.set(a.type, a);
+  showBanner(a);
+  log(a.severity === 'critical' ? 'critical' : 'warn', `🚨 ${a.message}`);
+});
+
+socket.on('alert_resolved', d => {
+  S.alerts.delete(d.type);
+  const msgs = { HIGH_TEMPERATURE:'Temperatura voltou ao normal', CONNECTION_TIMEOUT:'Conexão restabelecida' };
+  log('success', `✅ ${msgs[d.type] ?? 'Alerta resolvido'}`);
+  if (S.alerts.size === 0) hideBanner();
+  else showBanner([...S.alerts.values()][0]);
+});
+
+// ════════════════════════════════════════════════════
+//  RENDER
+// ════════════════════════════════════════════════════
+function renderTemp(t, stats) {
+  const over  = t > (stats?.tempThreshold ?? S.threshold);
+  const cls   = over ? 'warn' : '';
+  const pct   = Math.min((t / 50) * 100, 100);
+  const color = over ? 'var(--yellow)' : 'var(--cyan)';
+  document.getElementById('temp-panel').innerHTML = `
+    <div class="big ${cls}">${t.toFixed(1)}<span class="unit">°C</span></div>
+    <div class="reading-sub">Limite: ${stats?.tempThreshold ?? S.threshold}°C</div>
+    <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>`;
+}
+
+function renderHumi(h) {
+  const pct   = Math.min(h, 100);
+  const color = h > 70 ? 'var(--yellow)' : 'var(--blue)';
+  document.getElementById('humi-panel').innerHTML = `
+    <div class="big">${h.toFixed(1)}<span class="unit">%</span></div>
+    <div class="reading-sub">Conforto: 40–60%</div>
+    <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>`;
+}
+
+function renderRules(s) {
+  if (!s) return;
+  const avg = s.movingAverage != null ? `${s.movingAverage}°C` : '—';
+  const aCls = s.movingAverage > s.tempThreshold ? 'warn' : 'ok';
+  const tCls = s.timeoutAlertActive ? 'danger' : 'ok';
+  const secs = s.secondsSinceLastReading != null ? `${s.secondsSinceLastReading}s atrás` : '—';
+  document.getElementById('rules-panel').innerHTML = `
+    <div class="stat"><span class="stat-k">Média móvel (${s.windowSeconds}s)</span><span class="stat-v ${aCls}">${avg}</span></div>
+    <div class="stat"><span class="stat-k">Leituras na janela</span><span class="stat-v">${s.readingsInWindow}</span></div>
+    <div class="stat"><span class="stat-k">Última leitura</span><span class="stat-v ${tCls}">${secs}</span></div>
+    <div class="stat"><span class="stat-k">Alerta temp.</span><span class="stat-v ${s.tempAlertActive?'warn':'ok'}">${s.tempAlertActive?'⚠️ ATIVO':'✓ Normal'}</span></div>
+    <div class="stat"><span class="stat-k">Alerta timeout</span><span class="stat-v ${s.timeoutAlertActive?'danger':'ok'}">${s.timeoutAlertActive?'🔌 ATIVO':'✓ Normal'}</span></div>`;
+}
+
+// ════════════════════════════════════════════════════
+//  CANVAS CHART
+// ════════════════════════════════════════════════════
+function pushHistory(t) {
+  S.history.push(t);
+  if (S.history.length > S.maxHistory) S.history.shift();
+  drawChart();
+}
+
+function drawChart() {
+  const canvas = document.getElementById('chart');
+  const dpr    = window.devicePixelRatio || 1;
+  const rect   = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const W = rect.width, H = rect.height;
+  const d = S.history;
+  if (d.length < 2) return;
+
+  const p = { t:12, r:14, b:22, l:38 };
+  const cW = W - p.l - p.r, cH = H - p.t - p.b;
+  const mn = Math.min(...d) - 1.5, mx = Math.max(...d) + 1.5, rng = mx - mn || 1;
+
+  const x = i => p.l + (i / (d.length - 1)) * cW;
+  const y = v => p.t + (1 - (v - mn) / rng) * cH;
+
+  // grid
+  ctx.strokeStyle = 'rgba(26,37,53,.9)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const gy = p.t + (i / 3) * cH;
+    ctx.beginPath(); ctx.moveTo(p.l, gy); ctx.lineTo(W - p.r, gy); ctx.stroke();
+    ctx.fillStyle = '#475569';
+    ctx.font = `10px 'IBM Plex Mono', monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText((mx - (i / 3) * rng).toFixed(1), p.l - 5, gy + 4);
+  }
+
+  // threshold line
+  const th = S.threshold;
+  if (th >= mn && th <= mx) {
+    ctx.setLineDash([4,4]);
+    ctx.strokeStyle = 'rgba(245,158,11,.45)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(p.l, y(th)); ctx.lineTo(W - p.r, y(th)); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // fill
+  const grad = ctx.createLinearGradient(0, p.t, 0, p.t + cH);
+  grad.addColorStop(0, 'rgba(34,211,238,.15)');
+  grad.addColorStop(1, 'rgba(34,211,238,0)');
+  ctx.beginPath();
+  d.forEach((v,i) => i===0 ? ctx.moveTo(x(i),y(v)) : ctx.lineTo(x(i),y(v)));
+  ctx.lineTo(x(d.length-1), p.t+cH); ctx.lineTo(x(0), p.t+cH);
+  ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
+
+  // line
+  ctx.beginPath();
+  d.forEach((v,i) => i===0 ? ctx.moveTo(x(i),y(v)) : ctx.lineTo(x(i),y(v)));
+  ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.stroke();
+
+  // dots
+  d.forEach((v,i) => {
+    ctx.beginPath(); ctx.arc(x(i), y(v), 2.5, 0, Math.PI*2);
+    ctx.fillStyle = v > th ? '#f59e0b' : '#22d3ee'; ctx.fill();
+  });
+
+  // last label
+  const lv = d[d.length-1], lx = x(d.length-1), ly = y(lv);
+  ctx.fillStyle = '#0d1420';
+  ctx.fillRect(lx-24, ly-20, 48, 17);
+  ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 1;
+  ctx.strokeRect(lx-24, ly-20, 48, 17);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = `bold 10px 'IBM Plex Mono', monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(lv.toFixed(1)+'°C', lx, ly-7);
+}
+
+window.addEventListener('resize', () => { if (S.history.length >= 2) drawChart(); });
+
+// ════════════════════════════════════════════════════
+//  MQTT STATUS
+// ════════════════════════════════════════════════════
+function setMqtt(s) {
+  S.mqttStatus = s;
+  const pill = document.getElementById('pill');
+  const txt  = document.getElementById('pill-txt');
+  pill.className = `mqtt-pill ${s}`;
+  txt.textContent = {
+    connected:'AWS IoT Core conectado', reconnecting:'Reconectando...', disconnected:'Desconectado', offline:'Broker offline', connecting:'Conectando...'
+  }[s] ?? s;
+}
+
+// ════════════════════════════════════════════════════
+//  BANNER
+// ════════════════════════════════════════════════════
+function showBanner(a) {
+  const b = document.getElementById('banner');
+  document.getElementById('b-title').textContent =
+    ({HIGH_TEMPERATURE:'🌡️  Temperatura Elevada', CONNECTION_TIMEOUT:'🔌  Falha de Conexão'}[a.type] ?? a.type);
+  document.getElementById('b-msg').textContent = a.message;
+  b.className = a.severity === 'critical' ? 'critical' : 'warning';
+  b.style.display = 'block';
+}
+function hideBanner() { document.getElementById('banner').style.display = 'none'; }
+
+// ════════════════════════════════════════════════════
+//  LOG
+// ════════════════════════════════════════════════════
+function log(level, msg) {
+  const el   = document.getElementById('log');
+  const row  = document.createElement('div');
+  const time = new Date().toLocaleTimeString('pt-BR');
+  row.className = `log-row ${level}`;
+  row.innerHTML = `<span class="log-t">${time}</span><span>${msg}</span>`;
+  el.prepend(row);
+  while (el.children.length > 60) el.removeChild(el.lastChild);
+}
+</script>
+</body>
+</html>
