@@ -52,7 +52,7 @@ void loop() {
   if (!client.connected()) reconnect();
   client.loop();
 
-  delay(2000);
+  delay(20000);
 
   float h = dht.readHumidity();
   float t = dht.readTemperature();
